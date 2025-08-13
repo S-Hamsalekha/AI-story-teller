@@ -1,4 +1,4 @@
-# storyteller_colab_modular.py
+# storyteller_colab_refactored_zeroscope.py
 
 !pip install -q diffusers transformers accelerate safetensors imageio imageio-ffmpeg
 
@@ -12,14 +12,20 @@ from huggingface_hub import notebook_login
 from diffusers import DiffusionPipeline
 from IPython.display import HTML, display
 from base64 import b64encode
+from PIL import Image
 
 # --------------------
-# 1. Hugging Face Login
+# Compile-time config
+# --------------------
+ENABLE_T2I_ANIMATION = True  # Set False to disable animation in T2I mode
+
+# --------------------
+# Hugging Face Login
 # --------------------
 notebook_login()
 
 # --------------------
-# Utility: Clear HF Cache
+# Utility: Clear HF cache
 # --------------------
 def clear_hf_cache():
     cache_dir = os.path.expanduser("~/.cache/huggingface")
@@ -31,7 +37,7 @@ def clear_hf_cache():
         print("No cache to clear.")
 
 # --------------------
-# 2. Story Functions
+# Story functions
 # --------------------
 def get_story_from_user():
     print("Please enter your story. Press Enter twice to finish:")
@@ -68,7 +74,7 @@ def generate_prompts(scenes):
     return prompts
 
 # --------------------
-# 3. Model Loading (separate)
+# Model loading
 # --------------------
 def load_video_model(model_id="damo-vilab/text-to-video-ms-1.7b", device="cuda"):
     clear_hf_cache()
@@ -104,8 +110,18 @@ def load_image_model(model_id, device="cuda"):
     print("Image model loaded.")
     return pipe
 
+def load_animation_model(model_id="cerspense/zeroscope_v2_576w", device="cuda"):
+    clear_hf_cache()
+    print(f"Loading lightweight animation model: {model_id}")
+    pipe = DiffusionPipeline.from_pretrained(
+        model_id,
+        torch_dtype=torch.float16
+    ).to(device)
+    print("Animation model loaded.")
+    return pipe
+
 # --------------------
-# 4. Generation Functions
+# Generation functions
 # --------------------
 def generate_video(pipe, prompt, output_path, num_steps=25, fps=8):
     print(f"Generating video for: {prompt}")
@@ -122,8 +138,17 @@ def generate_image(pipe, prompt, output_path):
     image.save(output_path)
     print(f"Image saved to {output_path}")
 
+def animate_image_with_model(pipe, image_path, output_path, num_frames=14, fps=8):
+    image = Image.open(image_path).convert("RGB").resize((512, 512))
+    print(f"Animating {image_path} → {output_path}")
+    frames = pipe(image, num_frames=num_frames).frames[0]
+    if frames.dtype != np.uint8:
+        frames = (frames * 255).clip(0, 255).astype(np.uint8)
+    imageio.mimsave(output_path, list(frames), fps=fps)
+    print(f"Video saved to {output_path}")
+
 # --------------------
-# 5. Display Outputs Inline (Base64 for Colab)
+# Display function
 # --------------------
 def display_all_files(scene_count, mode="video"):
     for i in range(1, scene_count + 1):
@@ -144,9 +169,23 @@ def display_all_files(scene_count, mode="video"):
                 display(HTML(f"<h3>Scene {i}</h3><img src='data:image/png;base64,{img_b64}' width='512'>"))
 
 # --------------------
-# 6. Run Story Once (model already loaded)
+# Public model loading functions
 # --------------------
-def run_story_with_model(mode, model):
+def load_t2v_model():
+    return load_video_model()
+
+def load_t2i_models():
+    model_id = choose_image_model()
+    t2i_model = load_image_model(model_id)
+    anim_model = None
+    if ENABLE_T2I_ANIMATION:
+        anim_model = load_animation_model()
+    return t2i_model, anim_model
+
+# --------------------
+# Story runner (reuse loaded models)
+# --------------------
+def run_story_with_model(mode, model, anim_model=None):
     story = get_story_from_user()
     print("\nYour story is:\n", story)
 
@@ -157,25 +196,34 @@ def run_story_with_model(mode, model):
     for p in prompts:
         print(f"Scene {p['scene_number']} Prompt: {p['enhanced_prompt']}")
 
-    if mode == "video":
+    if mode == "T2V":
         for p in prompts:
             output_file = f"/content/scene_{p['scene_number']}.mp4"
             generate_video(model, p['enhanced_prompt'], output_file)
         display_all_files(len(prompts), mode="video")
 
-    elif mode == "image":
+    elif mode == "T2I":
         for p in prompts:
-            output_file = f"/content/scene_{p['scene_number']}.png"
-            generate_image(model, p['enhanced_prompt'], output_file)
-        display_all_files(len(prompts), mode="image")
+            img_path = f"/content/scene_{p['scene_number']}.png"
+            generate_image(model, p['enhanced_prompt'], img_path)
+            if ENABLE_T2I_ANIMATION and anim_model:
+                vid_path = f"/content/scene_{p['scene_number']}.mp4"
+                animate_image_with_model(anim_model, img_path, vid_path)
 
-# --------------------
-# 7. Example Usage in Colab
-# --------------------
-# Step 1 — Load model ONCE:
-# mode = "image" or "video"
-# model_id = choose_image_model() if mode == "image" else "damo-vilab/text-to-video-ms-1.7b"
-# model = load_image_model(model_id)  # or load_video_model()
+        if ENABLE_T2I_ANIMATION and anim_model:
+            display_all_files(len(prompts), mode="video")
+        else:
+            display_all_files(len(prompts), mode="image")
 
-# Step 2 — Run multiple stories:
-# run_story_with_model(mode, model)
+
+# Step 1 — Choose mode and load models once
+mode = "T2I"  # or "T2V"
+
+if mode == "T2V":
+    t2v_model = load_t2v_model()
+elif mode == "T2I":
+    t2i_model, anim_model = load_t2i_models()
+
+# Step 2 — Generate multiple stories without reloading models
+run_story_with_model("T2I", t2i_model, anim_model)  # Story 1
+run_story_with_model("T2I", t2i_model, anim_model)  # Story 2
