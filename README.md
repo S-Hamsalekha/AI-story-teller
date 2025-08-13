@@ -11,3 +11,9 @@ PIPELINE OVERVIEW
 5. Subtitles: Generate aligned captions
 6. Video Composer: Stitch scenes, narration, subtitles
 7. Output: Final cultural story video
+
+
+==================================================================
+Requirements
+[x]You will need a google colab account to test this
+[x]hugging face account and API key for the t2v model
