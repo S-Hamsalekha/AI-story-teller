@@ -1,4 +1,4 @@
-# storyteller_colab_refactored_zeroscope.py
+# storyteller.py
 
 !pip install -q diffusers transformers accelerate safetensors imageio imageio-ffmpeg
 
@@ -17,7 +17,7 @@ from PIL import Image
 # --------------------
 # Compile-time config
 # --------------------
-ENABLE_T2I_ANIMATION = True  # Set False to disable animation in T2I mode
+ENABLE_T2I_ANIMATION = False  # Set False to disable animation in T2I mode
 
 # --------------------
 # Hugging Face Login
@@ -217,13 +217,14 @@ def run_story_with_model(mode, model, anim_model=None):
 
 
 # Step 1 — Choose mode and load models once
-mode = "T2I"  # or "T2V"
+mode = "T2V"  # or "T2V"
 
 if mode == "T2V":
     t2v_model = load_t2v_model()
 elif mode == "T2I":
     t2i_model, anim_model = load_t2i_models()
 
+
 # Step 2 — Generate multiple stories without reloading models
-run_story_with_model("T2I", t2i_model, anim_model)  # Story 1
-run_story_with_model("T2I", t2i_model, anim_model)  # Story 2
+run_story_with_model("T2V", t2v_model)  # Story 1
+#run_story_with_model("T2I", t2i_model, anim_model)  # Story 2                
