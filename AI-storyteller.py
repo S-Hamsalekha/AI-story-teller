@@ -1,3 +1,6 @@
+import os
+os.environ["HF_TOKEN"] = input("Enter your Hugging Face token: ").strip()
+
 !pip install -q diffusers transformers accelerate safetensors imageio imageio-ffmpeg groq
 
 import os
@@ -9,7 +12,7 @@ from groq import Groq
 from diffusers import DiffusionPipeline
 from IPython.display import HTML, display
 from PIL import Image
-from huggingface_hub import notebook_login
+from huggingface_hub import login
 import json
 
 # --------------------
@@ -18,10 +21,6 @@ import json
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 ENABLE_T2I_ANIMATION = False
 
-# --------------------
-# Hugging Face Login
-# --------------------
-notebook_login()
 
 # --------------------
 # Utility: Clear HF cache
@@ -82,10 +81,15 @@ def generate_scenes_with_prompts_llm(story: str):
 # --------------------
 def load_video_model(model_id="damo-vilab/text-to-video-ms-1.7b"):
     clear_hf_cache()
+    token = os.environ.get("HF_TOKEN")
+    if not token:
+        raise RuntimeError("HF_TOKEN is not set. Please set your Hugging Face token first.")
+    login(token=token)
     pipe = DiffusionPipeline.from_pretrained(
         model_id,
         torch_dtype=torch.float16,
-        variant="fp16"
+        variant="fp16",
+        use_auth_token=token
     ).to(DEVICE)
     return pipe
 
@@ -104,17 +108,27 @@ def choose_image_model():
 
 def load_image_model(model_id):
     clear_hf_cache()
+    token = os.environ.get("HF_TOKEN")
+    if not token:
+        raise RuntimeError("HF_TOKEN is not set. Please set your Hugging Face token first.")
+    login(token=token)
     pipe = DiffusionPipeline.from_pretrained(
         model_id,
-        torch_dtype=torch.float16
+        torch_dtype=torch.float16,
+        use_auth_token=token
     ).to(DEVICE)
     return pipe
 
 def load_animation_model(model_id="cerspense/zeroscope_v2_576w"):
     clear_hf_cache()
+    token = os.environ.get("HF_TOKEN")
+    if not token:
+        raise RuntimeError("HF_TOKEN is not set. Please set your Hugging Face token first.")
+    login(token=token)
     pipe = DiffusionPipeline.from_pretrained(
         model_id,
-        torch_dtype=torch.float16
+        torch_dtype=torch.float16,
+        use_auth_token=token
     ).to(DEVICE)
     return pipe
 
