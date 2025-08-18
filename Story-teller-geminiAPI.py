@@ -21,7 +21,6 @@ resp = client.models.generate_content(
 print(resp.text)
 
 
-
 # ===============================
 # Step 2 + Step 3 : Story → Scenes → Images (clean JSON output)
 # ===============================
@@ -68,6 +67,7 @@ except Exception as e:
     scenes = []
 
 # 4) Generate an image for each scene
+image_files = []
 for scene in scenes:
     print(f"🎨 Generating Scene {scene['scene_number']}: {scene['description']}")
     
@@ -88,7 +88,37 @@ for scene in scenes:
     if img:
         filename = f"scene_{scene['scene_number']}.png"
         img.save(filename)
+        image_files.append(filename)
         display(img)
         print(f"✅ Saved {filename}\n")
     else:
         print("⚠️ No image returned for this scene.\n")
+
+
+# ===============================
+# Step 4 : Animate images (Ken Burns) + Stitch into video
+# ===============================
+!pip -q install moviepy
+
+from moviepy.editor import ImageClip, concatenate_videoclips
+
+def animate_image_panzoom(image_path, duration=5):
+    clip = ImageClip(image_path)
+    # zoom-in effect (Ken Burns)
+    animated = clip.resize(lambda t: 1 + 0.05 * t/duration)  # 5% zoom over duration
+    animated = animated.set_position(("center", "center")).set_duration(duration)
+    return animated
+
+clips = []
+for img_file in sorted(image_files):
+    clips.append(animate_image_panzoom(img_file, duration=5))
+
+final_video = concatenate_videoclips(clips, method="compose")
+final_video.write_videofile("final_story.mp4", codec="libx264", fps=24)
+
+print("🎬 Story video saved as final_story.mp4")
+
+
+from IPython.display import Video, display
+# 🎥 Display inline in notebook
+display(Video("final_story.mp4", embed=True))
