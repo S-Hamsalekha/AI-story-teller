@@ -122,3 +122,8 @@ print("🎬 Story video saved as final_story.mp4")
 from IPython.display import Video, display
 # 🎥 Display inline in notebook
 display(Video("final_story.mp4", embed=True))
+
+
+from IPython.display import Video, display, FileLink
+# 📥 Add download link
+display(FileLink("final_story.mp4"))
