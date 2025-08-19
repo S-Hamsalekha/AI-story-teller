@@ -6,13 +6,11 @@ api_key = user_secrets.get_secret("GEMINI_API_KEY")  # 👈 fetch your saved sec
 os.environ["GEMINI_API_KEY"] = api_key               # 👈 now set as env variable
 
 print("✅ GEMINI_API_KEY loaded")
-
 assert os.getenv("GEMINI_API_KEY"), "Token missing!"
 
-
 from google import genai
-
 client = genai.Client()  # reads GEMINI_API_KEY automatically
+
 # quick ping (text) — ensures auth works
 resp = client.models.generate_content(
     model="gemini-2.5-flash",
@@ -20,15 +18,24 @@ resp = client.models.generate_content(
 )
 print(resp.text)
 
-
 # ===============================
 # Step 2 + Step 3 : Story → Scenes → Images (clean JSON output)
 # ===============================
 
-import json
+import json, re
 from google.genai import types
 from PIL import Image
 from io import BytesIO
+
+def safe_json_parse(raw_text):
+    """Extract valid JSON from Gemini output (handles code fences or extra text)."""
+    # remove markdown code fences like ```json ... ```
+    cleaned = re.sub(r"^```(?:json)?|```$", "", raw_text.strip(), flags=re.MULTILINE).strip()
+    # extract the first JSON-looking structure (array or object)
+    m = re.search(r"(\[.*\]|\{.*\})", cleaned, flags=re.DOTALL)
+    if m:
+        cleaned = m.group(1)
+    return json.loads(cleaned)
 
 # 1) Take story input
 story = input("Please enter your story:\n")
@@ -58,9 +65,9 @@ response = client.models.generate_content(
 print("\nGemini Output (raw):\n")
 print(response.text)
 
-# 3) Parse JSON directly
+# 3) Safe JSON parse
 try:
-    scenes = json.loads(response.text.strip())
+    scenes = safe_json_parse(response.text)
 except Exception as e:
     print("⚠️ Could not parse Gemini output as JSON.")
     print("Error:", e)
@@ -94,36 +101,71 @@ for scene in scenes:
     else:
         print("⚠️ No image returned for this scene.\n")
 
-
 # ===============================
-# Step 4 : Animate images (Ken Burns) + Stitch into video
+# Step 5 : Narration + Zoom + Final Stitch
 # ===============================
-!pip -q install moviepy
+!pip -q install gTTS moviepy
 
-from moviepy.editor import ImageClip, concatenate_videoclips
+from gtts import gTTS
+from moviepy.editor import ImageClip, AudioFileClip, concatenate_videoclips
 
-def animate_image_panzoom(image_path, duration=5):
+def tts_gtts(text: str, out_path: str, lang: str = "en"):
+    """Generate narration audio with gTTS."""
+    tts = gTTS(text=text, lang=lang)
+    tts.save(out_path)
+    return out_path
+
+def animate_image_panzoom(image_path, duration=5, zoom=0.05):
+    """
+    Simple Ken Burns effect: slow zoom-in over `duration`.
+    Resolution unification happens at final concatenate (compose mode).
+    """
     clip = ImageClip(image_path)
-    # zoom-in effect (Ken Burns)
-    animated = clip.resize(lambda t: 1 + 0.05 * t/duration)  # 5% zoom over duration
-    animated = animated.set_position(("center", "center")).set_duration(duration)
+    animated = clip.resize(lambda t: 1 + zoom * (t / duration)).set_duration(duration)
+    animated = animated.set_position(("center", "center"))
     return animated
 
-clips = []
-for img_file in sorted(image_files):
-    clips.append(animate_image_panzoom(img_file, duration=5))
+scene_clips = []
+audio_handles = []   # keep refs to close later
 
-final_video = concatenate_videoclips(clips, method="compose")
-final_video.write_videofile("final_story.mp4", codec="libx264", fps=24)
+for scene in scenes:
+    n = scene["scene_number"]
+    img_path = f"scene_{n}.png"
+    if not os.path.exists(img_path):
+        print(f"⚠️ Missing image for scene {n}: {img_path}. Skipping.")
+        continue
 
-print("🎬 Story video saved as final_story.mp4")
+    # narration text
+    narration_text = scene.get("narration", scene.get("description", f"Scene {n}"))
+    audio_path = f"scene_{n}.mp3"
+    print(f"🔊 TTS for scene {n} …")
+    tts_gtts(narration_text, audio_path, lang="en")
 
+    # determine duration from audio
+    a = AudioFileClip(audio_path)
+    dur = a.duration
 
-from IPython.display import Video, display
-# 🎥 Display inline in notebook
-display(Video("final_story.mp4", embed=True))
+    # build zoomed clip and attach audio
+    v = animate_image_panzoom(img_path, duration=dur, zoom=0.05)
+    v = v.set_audio(a).set_duration(dur)
 
+    scene_clips.append(v)
+    audio_handles.append(a)
 
-from IPython.display import Video, display, FileLink
-# 📥 Add download link
-display(FileLink("final_story.mp4"))
+# Final stitch: compose enforces consistent frame size
+if scene_clips:
+    print("🔗 Stitching scenes …")
+    final = concatenate_videoclips(scene_clips, method="compose")
+    final.write_videofile("final_story.mp4", codec="libx264", audio_codec="aac", fps=24)
+
+    print("🎬 Story video saved as final_story.mp4")
+    from IPython.display import Video, display, FileLink
+    display(Video("final_story.mp4", embed=True))
+    display(FileLink("final_story.mp4"))
+
+    # cleanup
+    for a in audio_handles: a.close()
+    for v in scene_clips: v.close()
+    final.close()
+else:
+    print("⚠️ No scene clips were produced.")
