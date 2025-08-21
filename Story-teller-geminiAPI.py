@@ -87,10 +87,16 @@ for scene in scenes:
     )
     
     img = None
-    for part in img_response.candidates[0].content.parts:
-        if getattr(part, "inline_data", None):
-            img = Image.open(BytesIO(part.inline_data.data))
-            break
+    if img_response and img_response.candidates:
+        content = img_response.candidates[0].content
+        if content and getattr(content, "parts", None):
+            for part in content.parts:
+                if getattr(part, "inline_data", None):
+                    try:
+                        img = Image.open(BytesIO(part.inline_data.data))
+                    except Exception as e:
+                        print(f"⚠️ Failed to decode image for scene {scene['scene_number']}: {e}")
+                    break
 
     if img:
         filename = f"scene_{scene['scene_number']}.png"
@@ -99,7 +105,7 @@ for scene in scenes:
         display(img)
         print(f"✅ Saved {filename}\n")
     else:
-        print("⚠️ No image returned for this scene.\n")
+        print(f"⚠️ No image returned for scene {scene['scene_number']}.\n")
 
 # ===============================
 # Step 5 : Narration + Zoom + Final Stitch
