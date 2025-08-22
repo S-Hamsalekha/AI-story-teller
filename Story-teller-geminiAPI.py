@@ -1,5 +1,7 @@
 from kaggle_secrets import UserSecretsClient
 import os
+!pip install elevenlabs
+from elevenlabs import ElevenLabs, save, VoiceSettings
 
 
 # Narration language: "en" for English, "kn" for Kannada
@@ -8,9 +10,11 @@ NARRATION_LANG = "kn"
 user_secrets = UserSecretsClient()
 api_key = user_secrets.get_secret("GEMINI_API_KEY")  # 👈 fetch your saved secret
 os.environ["GEMINI_API_KEY"] = api_key               # 👈 now set as env variable
+os.environ["ELEVENLABS_API_KEY"] = user_secrets.get_secret("ELEVENLABS_API_KEY")  # 👈 new
 
-print("✅ GEMINI_API_KEY loaded")
-assert os.getenv("GEMINI_API_KEY"), "Token missing!"
+print("✅ API keys loaded")
+assert os.getenv("GEMINI_API_KEY"), "Gemini API key missing!"
+assert os.getenv("ELEVENLABS_API_KEY"), "ElevenLabs API key missing!"
 
 from google import genai
 client = genai.Client()  # reads GEMINI_API_KEY automatically
@@ -21,6 +25,74 @@ resp = client.models.generate_content(
     contents="Reply with the word: PONG"
 )
 print(resp.text)
+
+# ElevenLabs setup
+from elevenlabs import ElevenLabs, save
+el_client = ElevenLabs(api_key=os.getenv("ELEVENLABS_API_KEY"))
+
+
+def translate_to_kannada(text: str) -> str:
+    """Translate narration into Kannada using Gemini, returning only plain text."""
+    prompt = f"""
+Translate the following narration into Kannada.
+
+IMPORTANT:
+- Output ONLY the translated Kannada text.
+- Do NOT include explanations, extra words, or formatting.
+
+Narration:
+{text}
+"""
+    resp = client.models.generate_content(
+        model="gemini-2.5-flash",
+        contents=prompt
+    )
+
+    # Safely extract text
+    if resp and hasattr(resp, "text") and resp.text:
+        return resp.text.strip()
+
+    # Fallback: try candidates
+    if resp and getattr(resp, "candidates", None):
+        for cand in resp.candidates:
+            if cand and getattr(cand, "content", None):
+                parts = getattr(cand.content, "parts", [])
+                for part in parts:
+                    if getattr(part, "text", None):
+                        return part.text.strip()
+
+    print("⚠️ Gemini translation failed, using original text.")
+    return text
+
+
+def get_voice_id(voice_name: str) -> str:
+    """Look up a voice_id by its name (case-insensitive)."""
+    voices = el_client.voices.get_all()
+    for v in voices.voices:
+        if v.name.lower() == voice_name.lower():
+            return v.voice_id
+    raise ValueError(f"Voice '{voice_name}' not found in your ElevenLabs account.")
+
+def tts_elevenlabs(text: str, out_path: str, voice_name: str = "Monika Sogam", model_id: str = "eleven_multilingual_v2"):
+    """Generate narration audio using ElevenLabs TTS by voice name."""
+    voice_id = get_voice_id(voice_name)
+
+    audio_generator = el_client.text_to_speech.convert(
+        text=text,
+        voice_id=voice_id,
+        model_id=model_id,
+        output_format="mp3_44100_128",
+        voice_settings=VoiceSettings(
+            stability=0.0,
+            similarity_boost=1.0,
+            style=0.0,
+            use_speaker_boost=True,
+        )
+    )
+    audio_bytes = b"".join(audio_generator)
+    with open(out_path, "wb") as f:
+        f.write(audio_bytes)
+    return out_path
 
 # ===============================
 # Step 2 + Step 3 : Story → Scenes → Images (clean JSON output)
@@ -111,7 +183,6 @@ for scene in scenes:
         print(f"✅ Saved {filename}\n")
     else:
         print(f"⚠️ No image returned for scene {scene['scene_number']}.\n")
-
 # ===============================
 # Step 5 : Narration + Zoom + Final Stitch
 # ===============================
@@ -146,22 +217,30 @@ for scene in scenes:
         print(f"⚠️ Missing image for scene {n}: {img_path}. Skipping.")
         continue
 
-    # narration text
     narration_text = scene.get("narration", scene.get("description", f"Scene {n}"))
-    audio_path = f"scene_{n}.mp3"
-    print(f"🔊 TTS for scene {n} …")
-    tts_gtts(narration_text, audio_path, lang="en")
 
-    # determine duration from audio
+    # Translate if Kannada requested
+    if NARRATION_LANG == "kn":
+        print(f"🌐 Translating narration for scene {n} to Kannada …")
+        narration_text = translate_to_kannada(narration_text)
+        print(f"Narration text :{narration_text}")
+        voice_name = "Jessica"   # fallback (later replace with your Kannada voice)
+    else:
+        voice_name = "Rachel"   # English
+
+    audio_path = f"scene_{n}.mp3"
+    print(f"🔊 ElevenLabs TTS for scene {n} using voice '{voice_name}' …")
+    tts_elevenlabs(narration_text, audio_path, voice_name=voice_name)  # ✅ use voice_name
+
     a = AudioFileClip(audio_path)
     dur = a.duration
 
-    # build zoomed clip and attach audio
     v = animate_image_panzoom(img_path, duration=dur, zoom=0.05)
     v = v.set_audio(a).set_duration(dur)
-
     scene_clips.append(v)
     audio_handles.append(a)
+
+
 
 # Final stitch: compose enforces consistent frame size
 if scene_clips:
