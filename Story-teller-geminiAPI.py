@@ -1,6 +1,10 @@
 from kaggle_secrets import UserSecretsClient
 import os
 
+
+# Narration language: "en" for English, "kn" for Kannada
+NARRATION_LANG = "kn"
+
 user_secrets = UserSecretsClient()
 api_key = user_secrets.get_secret("GEMINI_API_KEY")  # 👈 fetch your saved secret
 os.environ["GEMINI_API_KEY"] = api_key               # 👈 now set as env variable
@@ -47,11 +51,12 @@ You are a storytelling assistant.
 TASK:
 - Break the following story into 3–5 distinct visual scenes.
 - Output MUST be a single valid JSON array ONLY.
-- Do NOT include any explanations, natural language text, or code fences.
+- Do NOT include explanations, natural language text, or code fences.
 - Each object in the array must have:
   - "scene_number" (integer)
-  - "description" (string, 1–2 sentences, what’s happening)
-  - "prompt" (string, a cinematic, artistic illustration prompt)
+  - "description" (1–2 sentences, visual summary of what’s happening)
+  - "prompt" (cinematic artistic illustration prompt for image generation)
+  - "narration" (1–2 sentences, natural spoken narration text for TTS)
 
 Story:
 {story}
