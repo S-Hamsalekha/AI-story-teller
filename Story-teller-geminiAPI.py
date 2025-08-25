@@ -5,7 +5,7 @@ from elevenlabs import ElevenLabs, save, VoiceSettings
 
 
 # Narration language: "en" for English, "kn" for Kannada
-NARRATION_LANG = "kn"
+NARRATION_LANG = "en"
 
 user_secrets = UserSecretsClient()
 api_key = user_secrets.get_secret("GEMINI_API_KEY")  # 👈 fetch your saved secret
@@ -65,17 +65,11 @@ Narration:
     return text
 
 
-def get_voice_id(voice_name: str) -> str:
-    """Look up a voice_id by its name (case-insensitive)."""
-    voices = el_client.voices.get_all()
-    for v in voices.voices:
-        if v.name.lower() == voice_name.lower():
-            return v.voice_id
-    raise ValueError(f"Voice '{voice_name}' not found in your ElevenLabs account.")
 
-def tts_elevenlabs(text: str, out_path: str, voice_name: str = "Monika Sogam", model_id: str = "eleven_multilingual_v2"):
-    """Generate narration audio using ElevenLabs TTS by voice name."""
-    voice_id = get_voice_id(voice_name)
+
+def tts_elevenlabs(text: str, out_path: str, voice_id: str = "ogSj7jM4rppgY9TgZMqW", model_id: str = "eleven_multilingual_v2"):
+    """Generate narration audio using ElevenLabs TTS by voice id."""
+
 
     audio_generator = el_client.text_to_speech.convert(
         text=text,
@@ -104,17 +98,40 @@ from PIL import Image
 from io import BytesIO
 
 def safe_json_parse(raw_text):
-    """Extract valid JSON from Gemini output (handles code fences or extra text)."""
-    # remove markdown code fences like ```json ... ```
+    """Extract valid JSON from Gemini output (handles code fences, junk tokens)."""
+    # Remove markdown code fences
     cleaned = re.sub(r"^```(?:json)?|```$", "", raw_text.strip(), flags=re.MULTILINE).strip()
-    # extract the first JSON-looking structure (array or object)
+    
+    # Remove obvious junk like 'ophe' or trailing commas
+    cleaned = re.sub(r"[^\{\}\[\],:\"'\w\s\.\-\n]", "", cleaned)  # strip invalid chars
+    cleaned = re.sub(r",\s*}", "}", cleaned)  # fix trailing commas before }
+    cleaned = re.sub(r",\s*]", "]", cleaned)  # fix trailing commas before ]
+    
+    # Extract first JSON-looking structure
     m = re.search(r"(\[.*\]|\{.*\})", cleaned, flags=re.DOTALL)
     if m:
         cleaned = m.group(1)
-    return json.loads(cleaned)
+    
+    try:
+        return json.loads(cleaned)
+    except Exception as e:
+        print("⚠️ Still invalid JSON after cleaning. Error:", e)
+        print("---- Cleaned text ----\n", cleaned[:500])
+        return []
+
 
 # 1) Take story input
-story = input("Please enter your story:\n")
+default_story = """
+In the ancient Gurukul of Sage Sandipani, two boys, Krishna and Sudama, forged a bond that transcended time and status. Krishna, the prince of Dwarka, was known for his divine charm and playful wit. Sudama, a humble Brahmin, was his closest friend, known for his poverty and unwavering devotion.
+Years passed. Krishna became the king of Dwarka, a prosperous kingdom of gold and jewels. Sudama, meanwhile, remained in his small, thatched hut, struggling to feed his family. His wife, distraught by their poverty, urged him to visit his old friend, believing that Krishna would help.
+Reluctantly, Sudama agreed. He couldn't go empty-handed, so his wife tied a small bundle of roasted rice (poha) in a worn-out cloth, a gift from a friend. With a heart full of doubt and a mind replaying memories of their shared childhood, Sudama embarked on his long journey to Dwarka.
+Upon arriving at the palace gates, the guards, seeing his tattered clothes, scoffed at him. But when the news of his arrival reached Krishna, the king's face lit up with joy. He ran out, his royal robes and crown forgotten, to embrace his old friend. Krishna washed Sudama's feet, a gesture of profound respect, and seated him on a golden throne.
+Krishna, with a playful smile, asked, "What have you brought for me, my friend?" Sudama, embarrassed by his simple gift, hid the small bundle behind his back. But Krishna, with his divine sight, knew what it was. He snatched the bundle and, with great delight, ate the roasted rice. He savored each grain, his love for Sudama making the humble offering taste sweeter than any royal feast.
+After their heartfelt reunion, Sudama prepared to leave, his pride preventing him from asking for help. He returned home, his heart heavy with the thought that he had not received any gifts. But as he approached his village, he was stunned. His old hut was replaced by a magnificent palace, his family adorned in silks and jewels.
+Tears of gratitude welled in his eyes. He realized that Krishna, in his divine generosity, had granted him wealth without ever being asked. The story of Krishna and Sudama became a timeless tale, a beautiful testament to the power of true friendship, unwavering faith, and the boundless compassion of the Divine."""    
+
+user_input = input("Please enter your story (press Enter to use default):\n")
+story = user_input if user_input else default_story
 
 # 2) Ask Gemini to segment story into scenes (strict JSON only)
 segmentation_prompt = f"""
@@ -224,13 +241,13 @@ for scene in scenes:
         print(f"🌐 Translating narration for scene {n} to Kannada …")
         narration_text = translate_to_kannada(narration_text)
         print(f"Narration text :{narration_text}")
-        voice_name = "Jessica"   # fallback (later replace with your Kannada voice)
+        voice_id = "ogSj7jM4rppgY9TgZMqW"   # Aakash Indian voice
     else:
-        voice_name = "Rachel"   # English
+        voice_id = "ogSj7jM4rppgY9TgZMqW"   # Aakash Indian voice
 
     audio_path = f"scene_{n}.mp3"
-    print(f"🔊 ElevenLabs TTS for scene {n} using voice '{voice_name}' …")
-    tts_elevenlabs(narration_text, audio_path, voice_name=voice_name)  # ✅ use voice_name
+    print(f"🔊 ElevenLabs TTS for scene {n}  …")
+    tts_elevenlabs(narration_text, audio_path, voice_id)  # ✅ use voice_name
 
     a = AudioFileClip(audio_path)
     dur = a.duration
@@ -239,7 +256,7 @@ for scene in scenes:
     v = v.set_audio(a).set_duration(dur)
     scene_clips.append(v)
     audio_handles.append(a)
-
+    
 
 
 # Final stitch: compose enforces consistent frame size
