@@ -7,6 +7,10 @@ from elevenlabs import ElevenLabs, save, VoiceSettings
 # Narration language: "en" for English, "kn" for Kannada
 NARRATION_LANG = "en"
 
+# Toggle narration on/off
+ENABLE_TTS = False    # 👈 set to False for animation-only testing
+DEFAULT_SCENE_DURATION = 5  # seconds when TTS disabled
+
 user_secrets = UserSecretsClient()
 api_key = user_secrets.get_secret("GEMINI_API_KEY")  # 👈 fetch your saved secret
 os.environ["GEMINI_API_KEY"] = api_key               # 👈 now set as env variable
@@ -214,15 +218,78 @@ def tts_gtts(text: str, out_path: str, lang: str = "en"):
     tts.save(out_path)
     return out_path
 
-def animate_image_panzoom(image_path, duration=5, zoom=0.05):
-    """
-    Simple Ken Burns effect: slow zoom-in over `duration`.
-    Resolution unification happens at final concatenate (compose mode).
-    """
-    clip = ImageClip(image_path)
-    animated = clip.resize(lambda t: 1 + zoom * (t / duration)).set_duration(duration)
-    animated = animated.set_position(("center", "center"))
+import random
+from moviepy.editor import ImageClip, AudioFileClip, vfx
+
+from moviepy.editor import ImageClip, vfx
+
+def animate_scene(image_path, audio_path, duration, scene_number=None):
+    base_clip = ImageClip(image_path).set_duration(duration)
+    W, H = base_clip.size
+
+    # Define pan/zoom ranges
+    pan_fraction = 0.15   # pan up to 15% of width/height
+    zoom_strength = 0.2   # zoom up to ±20%
+
+    # Scale factor to ensure no black borders (1 + pan_fraction)
+    scale_factor = 1 + pan_fraction
+
+    zoomed = base_clip.resize(scale_factor)
+
+    # ---- Define pan functions ----
+    def pan_lr(get_frame, t):
+        frame = get_frame(t)
+        shift = int((pan_fraction * W) * (t / duration))
+        return frame[:, shift:shift + W]
+
+    def pan_rl(get_frame, t):
+        frame = get_frame(t)
+        shift = int((pan_fraction * W) * (1 - t / duration))
+        return frame[:, shift:shift + W]
+
+    def pan_tb(get_frame, t):
+        frame = get_frame(t)
+        shift = int((pan_fraction * H) * (t / duration))
+        return frame[shift:shift + H, :]
+
+    def pan_bt(get_frame, t):
+        frame = get_frame(t)
+        shift = int((pan_fraction * H) * (1 - t / duration))
+        return frame[shift:shift + H, :]
+
+    # ---- Define effects ----
+    effects = [
+        ("zoom_in", zoomed.resize(lambda t: 1 + zoom_strength * (t / duration))),
+        ("zoom_out", zoomed.resize(lambda t: 1 + zoom_strength * (1 - t / duration))),
+        ("pan_left_to_right", zoomed.fl(pan_lr, apply_to=['mask'])),
+        ("pan_right_to_left", zoomed.fl(pan_rl, apply_to=['mask'])),
+        ("pan_top_to_bottom", zoomed.fl(pan_tb, apply_to=['mask'])),
+        ("pan_bottom_to_top", zoomed.fl(pan_bt, apply_to=['mask'])),
+        ("static", base_clip)
+    ]
+
+    # Randomly pick effect
+    effect_name, animated = random.choice(effects)
+    if scene_number is not None:
+        print(f"🎥 Scene {scene_number}: Using {effect_name} effect (scale={scale_factor})")
+
+    # Fade in/out (video only)
+    animated = animated.fx(vfx.fadein, 1).fx(vfx.fadeout, 1)
+
+    # Add narration audio if available
+    if audio_path:
+        audio = AudioFileClip(audio_path).set_duration(duration)
+        animated = animated.set_audio(audio)
+
     return animated
+
+
+
+
+
+
+scene_clips = []
+audio_handles = []   # keep refs to close later
 
 scene_clips = []
 audio_handles = []   # keep refs to close later
@@ -235,27 +302,31 @@ for scene in scenes:
         continue
 
     narration_text = scene.get("narration", scene.get("description", f"Scene {n}"))
-
-    # Translate if Kannada requested
-    if NARRATION_LANG == "kn":
-        print(f"🌐 Translating narration for scene {n} to Kannada …")
-        narration_text = translate_to_kannada(narration_text)
-        print(f"Narration text :{narration_text}")
-        voice_id = "ogSj7jM4rppgY9TgZMqW"   # Aakash Indian voice
-    else:
-        voice_id = "ogSj7jM4rppgY9TgZMqW"   # Aakash Indian voice
-
     audio_path = f"scene_{n}.mp3"
-    print(f"🔊 ElevenLabs TTS for scene {n}  …")
-    tts_elevenlabs(narration_text, audio_path, voice_id)  # ✅ use voice_name
 
-    a = AudioFileClip(audio_path)
-    dur = a.duration
+    if ENABLE_TTS:
+        # Translate if Kannada requested
+        if NARRATION_LANG == "kn":
+            print(f"🌐 Translating narration for scene {n} to Kannada …")
+            narration_text = translate_to_kannada(narration_text)
+            print(f"Narration text : {narration_text}")
 
-    v = animate_image_panzoom(img_path, duration=dur, zoom=0.05)
-    v = v.set_audio(a).set_duration(dur)
+        print(f"🔊 ElevenLabs TTS for scene {n} …")
+        tts_elevenlabs(narration_text, audio_path, voice_id="ogSj7jM4rppgY9TgZMqW")
+
+        a = AudioFileClip(audio_path)
+        dur = a.duration
+        v = animate_scene(img_path, audio_path, dur, scene_number=n)
+        v = v.set_audio(a).set_duration(dur)
+        audio_handles.append(a)
+
+    else:
+        print(f"🎞️ Skipping TTS for scene {n}, using default duration {DEFAULT_SCENE_DURATION}s …")
+        dur = DEFAULT_SCENE_DURATION
+        v = animate_scene(img_path, None, dur, scene_number=n)
+
     scene_clips.append(v)
-    audio_handles.append(a)
+
     
 
 
