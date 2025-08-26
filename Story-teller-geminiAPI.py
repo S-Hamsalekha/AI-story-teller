@@ -7,9 +7,9 @@ from elevenlabs import ElevenLabs, save, VoiceSettings
 # Narration language: "en" for English, "kn" for Kannada
 NARRATION_LANG = "en"
 
-# Toggle narration on/off
-ENABLE_TTS = False    # 👈 set to False for animation-only testing
-DEFAULT_SCENE_DURATION = 5  # seconds when TTS disabled
+# Choose which TTS engine to use: "gtts" or "11labs"
+TTS_API = "gtts"   # options: "gtts", "11labs"
+DEFAULT_SCENE_DURATION = 5  # fallback when no audio
 
 user_secrets = UserSecretsClient()
 api_key = user_secrets.get_secret("GEMINI_API_KEY")  # 👈 fetch your saved secret
@@ -69,7 +69,17 @@ Narration:
     return text
 
 
+def tts_gtts(text: str, out_path: str, lang: str = "en"):
+    """Generate narration audio with gTTS (Indian English accent for en, Kannada supported)."""
+    if lang == "en":
+        tts = gTTS(text=text, lang="en", tld="co.in")  # 🇮🇳 Indian English accent
+    elif lang == "kn":
+        tts = gTTS(text=text, lang="kn")               # Kannada
+    else:
+        tts = gTTS(text=text, lang=lang)
 
+    tts.save(out_path)
+    return out_path
 
 def tts_elevenlabs(text: str, out_path: str, voice_id: str = "ogSj7jM4rppgY9TgZMqW", model_id: str = "eleven_multilingual_v2"):
     """Generate narration audio using ElevenLabs TTS by voice id."""
@@ -91,7 +101,15 @@ def tts_elevenlabs(text: str, out_path: str, voice_id: str = "ogSj7jM4rppgY9TgZM
     with open(out_path, "wb") as f:
         f.write(audio_bytes)
     return out_path
-
+    
+def generate_tts(text: str, out_path: str, lang: str = "en"):
+    """Dispatch TTS to GTTS or ElevenLabs based on TTS_API flag."""
+    if TTS_API == "gtts":
+        return tts_gtts(text, out_path, lang)
+    elif TTS_API == "11labs":
+        return tts_elevenlabs(text, out_path, voice_id="ogSj7jM4rppgY9TgZMqW")
+    else:
+        raise ValueError(f"Unsupported TTS_API: {TTS_API}")
 # ===============================
 # Step 2 + Step 3 : Story → Scenes → Images (clean JSON output)
 # ===============================
@@ -212,12 +230,6 @@ for scene in scenes:
 from gtts import gTTS
 from moviepy.editor import ImageClip, AudioFileClip, concatenate_videoclips
 
-def tts_gtts(text: str, out_path: str, lang: str = "en"):
-    """Generate narration audio with gTTS."""
-    tts = gTTS(text=text, lang=lang)
-    tts.save(out_path)
-    return out_path
-
 import random
 from moviepy.editor import ImageClip, AudioFileClip, vfx
 
@@ -304,24 +316,23 @@ for scene in scenes:
     narration_text = scene.get("narration", scene.get("description", f"Scene {n}"))
     audio_path = f"scene_{n}.mp3"
 
-    if ENABLE_TTS:
-        # Translate if Kannada requested
-        if NARRATION_LANG == "kn":
-            print(f"🌐 Translating narration for scene {n} to Kannada …")
-            narration_text = translate_to_kannada(narration_text)
-            print(f"Narration text : {narration_text}")
+    # Translate narration if Kannada requested
+    if NARRATION_LANG == "kn":
+        print(f"🌐 Translating narration for scene {n} to Kannada …")
+        narration_text = translate_to_kannada(narration_text)
+        print(f"Narration text : {narration_text}")
 
-        print(f"🔊 ElevenLabs TTS for scene {n} …")
-        tts_elevenlabs(narration_text, audio_path, voice_id="ogSj7jM4rppgY9TgZMqW")
-
+    audio_path = f"scene_{n}.mp3"
+    try:
+        print(f"🔊 Generating TTS with {TTS_API} for scene {n} …")
+        generate_tts(narration_text, audio_path, lang=NARRATION_LANG)
         a = AudioFileClip(audio_path)
         dur = a.duration
         v = animate_scene(img_path, audio_path, dur, scene_number=n)
         v = v.set_audio(a).set_duration(dur)
         audio_handles.append(a)
-
-    else:
-        print(f"🎞️ Skipping TTS for scene {n}, using default duration {DEFAULT_SCENE_DURATION}s …")
+    except Exception as e:
+        print(f"⚠️ TTS failed for scene {n}, using default duration {DEFAULT_SCENE_DURATION}s. Error: {e}")
         dur = DEFAULT_SCENE_DURATION
         v = animate_scene(img_path, None, dur, scene_number=n)
 
