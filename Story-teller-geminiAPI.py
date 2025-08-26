@@ -3,6 +3,16 @@ import os
 !pip install elevenlabs
 from elevenlabs import ElevenLabs, save, VoiceSettings
 
+!pip -q install gTTS moviepy
+
+from gtts import gTTS
+from moviepy.editor import ImageClip, AudioFileClip, concatenate_videoclips, vfx
+import random
+
+import json, re
+from google.genai import types
+from PIL import Image
+from io import BytesIO
 
 # Narration language: "en" for English, "kn" for Kannada
 NARRATION_LANG = "en"
@@ -30,9 +40,7 @@ resp = client.models.generate_content(
 )
 print(resp.text)
 
-# ElevenLabs setup
-from elevenlabs import ElevenLabs, save
-el_client = ElevenLabs(api_key=os.getenv("ELEVENLABS_API_KEY"))
+
 
 
 def translate_to_kannada(text: str) -> str:
@@ -81,10 +89,14 @@ def tts_gtts(text: str, out_path: str, lang: str = "en"):
     tts.save(out_path)
     return out_path
 
-def tts_elevenlabs(text: str, out_path: str, voice_id: str = "ogSj7jM4rppgY9TgZMqW", model_id: str = "eleven_multilingual_v2"):
+# ElevenLabs setup
+from elevenlabs import ElevenLabs, save    
+VOICE_ID = "ogSj7jM4rppgY9TgZMqW"  # Default voice_id (Aakash, Indian English)
+def tts_elevenlabs(text: str, out_path: str, voice_id: str = VOICE_ID, model_id: str = "eleven_multilingual_v2"):
     """Generate narration audio using ElevenLabs TTS by voice id."""
 
 
+    el_client = ElevenLabs(api_key=os.getenv("ELEVENLABS_API_KEY"))
     audio_generator = el_client.text_to_speech.convert(
         text=text,
         voice_id=voice_id,
@@ -114,10 +126,7 @@ def generate_tts(text: str, out_path: str, lang: str = "en"):
 # Step 2 + Step 3 : Story → Scenes → Images (clean JSON output)
 # ===============================
 
-import json, re
-from google.genai import types
-from PIL import Image
-from io import BytesIO
+
 
 def safe_json_parse(raw_text):
     """Extract valid JSON from Gemini output (handles code fences, junk tokens)."""
@@ -225,17 +234,9 @@ for scene in scenes:
 # ===============================
 # Step 5 : Narration + Zoom + Final Stitch
 # ===============================
-!pip -q install gTTS moviepy
 
-from gtts import gTTS
-from moviepy.editor import ImageClip, AudioFileClip, concatenate_videoclips
 
-import random
-from moviepy.editor import ImageClip, AudioFileClip, vfx
-
-from moviepy.editor import ImageClip, vfx
-
-def animate_scene(image_path, audio_path, duration, scene_number=None):
+def animate_scene(image_path, duration, scene_number=None):
     base_clip = ImageClip(image_path).set_duration(duration)
     W, H = base_clip.size
 
@@ -288,16 +289,7 @@ def animate_scene(image_path, audio_path, duration, scene_number=None):
     # Fade in/out (video only)
     animated = animated.fx(vfx.fadein, 1).fx(vfx.fadeout, 1)
 
-    # Add narration audio if available
-    if audio_path:
-        audio = AudioFileClip(audio_path).set_duration(duration)
-        animated = animated.set_audio(audio)
-
     return animated
-
-
-
-
 
 
 scene_clips = []
@@ -328,17 +320,16 @@ for scene in scenes:
         generate_tts(narration_text, audio_path, lang=NARRATION_LANG)
         a = AudioFileClip(audio_path)
         dur = a.duration
-        v = animate_scene(img_path, audio_path, dur, scene_number=n)
+        v = animate_scene(img_path, dur, scene_number=n)
         v = v.set_audio(a).set_duration(dur)
         audio_handles.append(a)
     except Exception as e:
         print(f"⚠️ TTS failed for scene {n}, using default duration {DEFAULT_SCENE_DURATION}s. Error: {e}")
         dur = DEFAULT_SCENE_DURATION
-        v = animate_scene(img_path, None, dur, scene_number=n)
+        v = animate_scene(img_path, dur, scene_number=n)
 
     scene_clips.append(v)
 
-    
 
 
 # Final stitch: compose enforces consistent frame size
