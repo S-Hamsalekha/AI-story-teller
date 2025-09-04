@@ -8,6 +8,7 @@ from elevenlabs import ElevenLabs, save, VoiceSettings
 from gtts import gTTS
 from moviepy.editor import ImageClip, AudioFileClip, concatenate_videoclips, vfx
 import random
+from PIL import Image
 
 import json, re
 from google.genai import types
@@ -199,38 +200,41 @@ except Exception as e:
     scenes = []
 
 # 4) Generate an image for each scene
-image_files = []
-for scene in scenes:
-    print(f"🎨 Generating Scene {scene['scene_number']}: {scene['description']}")
-    
-    img_response = client.models.generate_content(
-        model="gemini-2.0-flash-preview-image-generation",
-        contents=scene['prompt'],
-        config=types.GenerateContentConfig(
-            response_modalities=["TEXT", "IMAGE"]
-        ),
-    )
-    
-    img = None
-    if img_response and img_response.candidates:
-        content = img_response.candidates[0].content
-        if content and getattr(content, "parts", None):
-            for part in content.parts:
-                if getattr(part, "inline_data", None):
-                    try:
-                        img = Image.open(BytesIO(part.inline_data.data))
-                    except Exception as e:
-                        print(f"⚠️ Failed to decode image for scene {scene['scene_number']}: {e}")
-                    break
+images = []
+for n, scene in enumerate(scenes, 1):
+    print(f"\nGenerating Scene {n}: {scene['prompt']}")
+    try:
+        img_response = client.models.generate_images(
+            model="imagen-3.0-generate-002",
+            prompt=scene["prompt"],
+            config=genai.types.GenerateImagesConfig(
+                number_of_images=1,
+                output_mime_type="image/png"
+            ),
+        )
 
-    if img:
-        filename = f"scene_{scene['scene_number']}.png"
-        img.save(filename)
-        image_files.append(filename)
-        display(img)
-        print(f"✅ Saved {filename}\n")
-    else:
-        print(f"⚠️ No image returned for scene {scene['scene_number']}.\n")
+        if img_response.generated_images:
+            gen_img = img_response.generated_images[0]
+
+            # ✅ FIXED: correctly access nested image_bytes
+            if gen_img.image and getattr(gen_img.image, "image_bytes", None):
+                img_path = f"scene_{n}.png"
+                with open(img_path, "wb") as f:
+                    f.write(gen_img.image.image_bytes)
+                print(f"✅ Saved image for Scene {n} → {img_path}")
+
+                # ✅ Display image right after saving
+                # ✅ Display inline (Kaggle/Colab)
+                img = Image.open(BytesIO(gen_img.image.image_bytes))
+                display(img)             
+                images.append(img_path)
+            else:
+                print(f"⚠️ No image_bytes for Scene {n}, RAW:")
+        else:
+            print(f"⚠️ No images returned for Scene {n}")
+
+    except Exception as e:
+        print(f"❌ Error generating Scene {n}: {e}")
 # ===============================
 # Step 5 : Narration + Zoom + Final Stitch
 # ===============================
