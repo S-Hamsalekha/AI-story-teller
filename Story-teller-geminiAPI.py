@@ -6,9 +6,15 @@ from elevenlabs import ElevenLabs, save, VoiceSettings
 !pip -q install gTTS moviepy
 
 from gtts import gTTS
-from moviepy.editor import ImageClip, AudioFileClip, concatenate_videoclips, vfx
+from moviepy.editor import (
+    ImageClip, AudioFileClip, concatenate_videoclips,
+    vfx, CompositeVideoClip
+)
+from PIL import Image, ImageDraw, ImageFont
+import numpy as np
+import textwrap
 import random
-from PIL import Image
+
 
 import json, re
 from google.genai import types
@@ -41,6 +47,58 @@ resp = client.models.generate_content(
 )
 print(resp.text)
 
+def create_subtitle_clip(text, video_clip, duration, fontsize=40, padding=20):
+    """
+    Render subtitles onto a transparent image using PIL (no ImageMagick needed).
+    """
+    try:
+        font = ImageFont.truetype(
+        "/usr/share/fonts/opentype/urw-base35/NimbusSans-Bold.otf", fontsize
+    )
+    except Exception:
+        font = ImageFont.load_default()
+
+    max_w = video_clip.w - 2 * padding
+    words = text.split()
+    lines, cur = [], ""
+
+    img_tmp = Image.new("RGB", (10, 10))
+    draw_tmp = ImageDraw.Draw(img_tmp)
+
+    for word in words:
+        test = (cur + " " + word).strip()
+        w = draw_tmp.textbbox((0, 0), test, font=font)[2]
+        if w <= max_w:
+            cur = test
+        else:
+            if cur:
+                lines.append(cur)
+            cur = word
+    if cur:
+        lines.append(cur)
+
+    line_height = draw_tmp.textbbox((0, 0), "Ay", font=font)[3] + 6
+    img_h = line_height * len(lines) + 2 * padding
+    img = Image.new("RGBA", (video_clip.w, img_h), (0, 0, 0, 0))
+    draw = ImageDraw.Draw(img)
+
+    y = padding
+    for line in lines:
+        w = draw.textbbox((0, 0), line, font=font)[2]
+        x = (video_clip.w - w) // 2
+
+        # black outline
+        outline = 2
+        for dx in range(-outline, outline + 1):
+            for dy in range(-outline, outline + 1):
+                draw.text((x + dx, y + dy), line, font=font, fill=(0, 0, 0, 200))
+
+        # white text
+        print("🎨 Using font:", font.getname(), "size:", fontsize)
+        draw.text((x, y), line, font=font, fill=(255, 255, 255, 255))
+        y += line_height
+
+    return ImageClip(np.array(img)).set_duration(duration).set_position(("center", "bottom"))
 
 
 
@@ -170,7 +228,7 @@ segmentation_prompt = f"""
 You are a storytelling assistant. 
 
 TASK:
-- Break the following story into 3–5 distinct visual scenes.
+- Break the following story into 5-7 distinct visual scenes.
 - Output MUST be a single valid JSON array ONLY.
 - Do NOT include explanations, natural language text, or code fences.
 - Each object in the array must have:
@@ -325,6 +383,11 @@ for scene in scenes:
         a = AudioFileClip(audio_path)
         dur = a.duration
         v = animate_scene(img_path, dur, scene_number=n)
+        fontsize = int(v.h * 0.02)
+        subtitle = create_subtitle_clip(narration_text, v, dur, fontsize=fontsize)
+
+        v = CompositeVideoClip([v, subtitle])  # overlay caption
+                
         v = v.set_audio(a).set_duration(dur)
         audio_handles.append(a)
     except Exception as e:
@@ -333,8 +396,7 @@ for scene in scenes:
         v = animate_scene(img_path, dur, scene_number=n)
 
     scene_clips.append(v)
-
-
+    
 
 # Final stitch: compose enforces consistent frame size
 if scene_clips:
